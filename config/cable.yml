@@ -1,0 +1,10 @@
+development:
+  adapter: async
+
+test:
+  adapter: test
+
+production:
+  adapter: redis
+  url: <%= ENV.fetch('SENTINEL_URL') %>
+  channel_prefix: hix_one_fourteen_zero_pg_production

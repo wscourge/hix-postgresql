@@ -1,0 +1,147 @@
+version: 2.1
+
+executors:
+  default:
+    working_directory: ~/hix_one_fourteen_zero_pg
+    docker:
+      - image: circleci/ruby:2.7.1-node-browsers
+        environment:
+          BUNDLE_JOBS: 3
+          BUNDLE_PATH: vendor/bundle
+          BUNDLE_RETRY: 3
+          BUNDLER_VERSION: 2.0.1
+          RAILS_ENV: test
+          DISABLE_SPRING: 1
+          DB_HOST: 127.0.0.1
+          REDIS_URL: localhost
+          REDIS_DB: 0
+          REDIS_PORT: 6379
+          PG_HOST: 127.0.0.1
+          PGUSER: hix_one_fourteen_zero_pg
+      - image: circleci/postgres:12.0
+        environment:
+          POSTGRES_DB: hix_one_fourteen_zero_pg_test
+          POSTGRES_USER: hix_one_fourteen_zero_pg
+      - image: redis:5.0.7
+
+commands:
+  configure_bundler:
+    description: Configure bundler
+    steps:
+      - run:
+          name: Configure bundler
+          command: |
+            echo 'export BUNDLER_VERSION=$(cat Gemfile.lock | tail -1 | tr -d " ")' >> $BASH_ENV
+            source $BASH_ENV
+            gem install bundler
+
+jobs:
+  build:
+    executor: default
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - hix_one_fourteen_zero_pg-{{ .Branch }}-{{ checksum "Gemfile.lock" }}
+            - hix_one_fourteen_zero_pg-
+          paths:
+            - vendor/bundle
+      - configure_bundler
+      - run:
+          name: Install bundle
+          command: bundle install
+      - run:
+          name: Wait for DB
+          command: dockerize -wait tcp://localhost:5432 -timeout 1m
+      - run:
+          name: Wait for Redis
+          command: dockerize -wait tcp://localhost:6379 -timeout 1m
+      - run:
+          name: Setup DB
+          command: bundle exec rails db:create db:migrate:with_data db:seed --trace
+      - run:
+          name: RSpec
+          command: |
+            bundle exec rspec --profile 10 \
+                              --format progress
+      - store_artifacts:
+          path: coverage
+      - save_cache:
+          key: hix_one_fourteen_zero_pg-{{ .Branch }}-{{ checksum "Gemfile.lock" }}
+          paths:
+            - vendor/bundle
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - ./hix_one_fourteen_zero_pg
+
+  brakeman:
+    executor: default
+    steps:
+      - attach_workspace:
+          at: ~/
+      - configure_bundler
+      - run:
+          name: Brakeman
+          command: bundle exec brakeman
+
+  fasterer:
+    executor: default
+    steps:
+      - attach_workspace:
+          at: ~/
+      - configure_bundler
+      - run:
+          name: Fasterer
+          command: bundle exec fasterer
+
+  lol_dba:
+    executor: default
+    steps:
+      - attach_workspace:
+          at: ~/
+      - configure_bundler
+      - run:
+          name: Lol DBA
+          command: bundle exec lol_dba db:find_indexes --debug
+
+  rails_best_practices:
+    executor: default
+    steps:
+      - attach_workspace:
+          at: ~/
+      - configure_bundler
+      - run:
+          name: Rails Best Practices
+          command: bundle exec rails_best_practices
+
+  rubocop:
+    executor: default
+    steps:
+      - attach_workspace:
+          at: ~/
+      - configure_bundler
+      - run:
+          name: Rubocop
+          command: bundle exec rubocop
+
+workflows:
+  version: 2
+  integration:
+    jobs:
+      - build
+      - brakeman:
+          requires:
+            - build
+      - fasterer:
+          requires:
+            - build
+      - lol_dba:
+          requires:
+            - build
+      - rails_best_practices:
+          requires:
+            - build
+      - rubocop:
+          requires:
+            - build
